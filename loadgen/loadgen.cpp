@@ -3,7 +3,7 @@
 // Build:  g++ -std=c++17 -O2 -pthread loadgen.cpp -o loadgen   (httplib.h in same dir)
 // Run:    ./loadgen [img_path] [rate] [workers] [host] [port] [duration] [out]
 // Out:    results.csv  (raw per-request rows for pandas/matplotlib) + a summary line.
-//
+// python -m uvicorn server.api:app --host 127.0.0.1 --port 8080
 // Architecture: one DISPATCHER walks a fixed Poisson schedule and pushes intended
 // send-times into a queue; a POOL of workers pull jobs, issue the request over a
 // reused keep-alive connection, and record latency measured from the INTENDED time.
@@ -70,15 +70,15 @@ std::vector<char> load_fixture(const std::string& path) {
 
 int main(int argc, char** argv) {
     // ---- config (all overridable on the command line) ----
-    std::string img_path = argc > 1 ? argv[1] : "fixtures/sample_input.bin";
-    double rate       = argc > 2 ? std::stod(argv[2]) : 500.0;   // requests/sec
-    int    workers    = argc > 3 ? std::stoi(argv[3]) : 32;      // pool size (Little's Law)
+    double rate       = argc > 1 ? std::stod(argv[1]) : 500.0;   // requests/sec
+    int    workers    = argc > 2 ? std::stoi(argv[2]) : 32;      // pool size (Little's Law)
+    double duration_s = argc > 3 ? std::stod(argv[3]) : 10.0;    // measurement window
     std::string host  = argc > 4 ? argv[4] : "127.0.0.1";
     int    port       = argc > 5 ? std::stoi(argv[5]) : 8080;
-    double duration_s = argc > 6 ? std::stod(argv[6]) : 10.0;    // measurement window
+    std::string img_path = argc > 6 ? argv[6] : "fixtures/sample_input.bin";
     std::string out = argc > 7 ? argv[7] : "results.csv";
     const double warmup_s = 2.0;                                 // discard first 2 s
-    const char*  path     = "/predict";                           // becomes a POST later
+    const char*  path     = "/predict";     
 
     std::vector<char> image;
     try {

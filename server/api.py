@@ -3,6 +3,7 @@ import asyncio
 import os
 import time
 from contextlib import asynccontextmanager
+import sys
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, Request
@@ -25,6 +26,7 @@ METRICS_CSV    = os.environ.get("METRICS_CSV", "")              # empty = no dum
 # raw little-endian float32, one CHW image = (3,224,224) in C order, no batch dim.
 EXPECTED_BYTES = 3 * 224 * 224 * 4                              # 602112
 
+sys.setswitchinterval(0.001)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

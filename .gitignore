@@ -2,4 +2,11 @@ imagenette2-320/
 *.onnx
 *.tgz
 venv
+<<<<<<< HEAD
 __pycache__
+=======
+*.pyc
+*.png
+*.csv
+.gitignore
+>>>>>>> 41e69bd (chore: update .gitignore)

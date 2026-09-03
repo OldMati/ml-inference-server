@@ -15,6 +15,7 @@ class InferenceBackend:
         if "CUDAExecutionProvider" not in active:
             raise RuntimeError(f"CUDA EP not active; providers = {active}")
 
+        print("PROVIDERS:", self.session.get_providers(), flush=True)
         self.in_name = self.session.get_inputs()[0].name
         self.out_name = self.session.get_outputs()[0].name
 
