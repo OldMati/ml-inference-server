@@ -1,7 +1,7 @@
 // loadgen.cpp — open-loop, coordinated-omission-aware HTTP load generator.
 //
 // Build:  g++ -std=c++17 -O2 -pthread loadgen.cpp -o loadgen   (httplib.h in same dir)
-// Run:    ./loadgen [rate_per_sec] [duration_s] [workers] [host] [port]
+// Run:    ./loadgen [img_path] [rate] [workers] [host] [port] [duration] [out]
 // Out:    results.csv  (raw per-request rows for pandas/matplotlib) + a summary line.
 //
 // Architecture: one DISPATCHER walks a fixed Poisson schedule and pushes intended
@@ -20,6 +20,7 @@
 #include <fstream>
 #include <cstdio>
 #include <string>
+#include <stdexcept>
 
 using namespace std::chrono;
 
@@ -54,15 +55,38 @@ public:
     }
 };
 
+constexpr size_t IMAGE_BYTES = 3 * 224 * 224 * 4; 
+
+std::vector<char> load_fixture(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) throw std::runtime_error("can't open fixture: " + path);
+    std::vector<char> buf((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (buf.size() != IMAGE_BYTES) {
+        throw std::runtime_error("fixture is " + std::to_string(buf.size()) +
+                                " bytes, expected " + std::to_string(IMAGE_BYTES));
+    }
+    return buf;
+}
+
 int main(int argc, char** argv) {
     // ---- config (all overridable on the command line) ----
-    double rate       = argc > 1 ? std::stod(argv[1]) : 500.0;   // requests/sec
-    double duration_s = argc > 2 ? std::stod(argv[2]) : 10.0;    // measurement window
+    std::string img_path = argc > 1 ? argv[1] : "fixtures/sample_input.bin";
+    double rate       = argc > 2 ? std::stod(argv[2]) : 500.0;   // requests/sec
     int    workers    = argc > 3 ? std::stoi(argv[3]) : 32;      // pool size (Little's Law)
     std::string host  = argc > 4 ? argv[4] : "127.0.0.1";
     int    port       = argc > 5 ? std::stoi(argv[5]) : 8080;
+    double duration_s = argc > 6 ? std::stod(argv[6]) : 10.0;    // measurement window
+    std::string out = argc > 7 ? argv[7] : "results.csv";
     const double warmup_s = 2.0;                                 // discard first 2 s
-    const char*  path     = "/infer";                           // becomes a POST later
+    const char*  path     = "/predict";                           // becomes a POST later
+
+    std::vector<char> image;
+    try {
+        image = load_fixture(img_path);  // path passed as a CLI arg, not hardcoded
+    } catch (const std::exception& e) {
+        std::cerr << "fixture load failed: " << e.what() << "\n";
+        return 1;
+    }
 
     JobQueue queue;
     std::vector<Record> records;
@@ -80,7 +104,8 @@ int main(int argc, char** argv) {
             if (job.stop) break;
 
             auto actual_send = steady_clock::now();
-            auto res  = cli.Get(path);                  // <-- the real request; swap for .Post(...) later
+            auto res = cli.Post(path, image.data(), image.size(), "application/octet-stream");
+            // auto res  = cli.Get(path);                  // <-- the real request; swap for .Post(...) later
             auto done = steady_clock::now();
 
             // CO-correct: measure from INTENDED, not from actual_send or from dequeue time.
@@ -117,7 +142,7 @@ int main(int argc, char** argv) {
     for (auto& t : pool) t.join();
 
     // ---- write raw per-request CSV (this is what your analysis scripts consume) ----
-    std::ofstream csv("results.csv");
+    std::ofstream csv(out);
     csv << "intended_ms,send_lag_ms,latency_ms,status,phase\n";
     for (auto& r : records)
         csv << r.intended_ms << "," << r.send_lag_ms << "," << r.latency_ms << ","
