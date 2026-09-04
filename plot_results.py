@@ -9,7 +9,8 @@ for f in sorted(glob.glob("results/rate_*.csv")):
     df = df[(df.phase == "measure") & (df.status == 200)]
     if df.empty:
         continue
-    duration_s = (df.intended_ms.max() - df.intended_ms.min()) / 1000
+    df["completion_ms"] = df.intended_ms + df.latency_ms
+    duration_s = (df.completion_ms.max() - df.completion_ms.min()) / 1000
     rows.append({
         "offered_rate": rate,
         "achieved_tput": len(df) / duration_s,
