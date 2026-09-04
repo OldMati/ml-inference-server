@@ -12,7 +12,7 @@ from backend import InferenceBackend
 from metrics import MetricsCollector
 # NAME CLASH TRAP: the scheduler's dataclass is also called Request, which is
 # FastAPI's request type. Alias it so the two never collide.
-from scheduler import NaiveScheduler, Request as InferenceRequest
+from scheduler import NaiveScheduler, DynamicScheduler, Request as InferenceRequest
 
 from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -21,6 +21,7 @@ MODEL_PATH = os.environ.get("MODEL_PATH", str(PROJECT_ROOT / "models" / "resnet1
 MAX_BATCH_SIZE = int(os.environ.get("MAX_BATCH_SIZE", "8"))
 MAX_WAIT_S     = float(os.environ.get("MAX_WAIT_S", "0.005"))   # 5 ms floor
 METRICS_CSV    = os.environ.get("METRICS_CSV", "")              # empty = no dump
+SCHEDULER = os.environ.get("SCHEDULER", "naive")
 
 # Wire contract (must match the loadgen exactly — swap points #1 and #2):
 # raw little-endian float32, one CHW image = (3,224,224) in C order, no batch dim.
@@ -33,7 +34,11 @@ async def lifespan(app: FastAPI):
     backend = InferenceBackend(MODEL_PATH)
     backend.warmup(range(1, MAX_BATCH_SIZE + 1))   # warm EVERY size, not just 1
     metrics = MetricsCollector()
-    scheduler = NaiveScheduler(backend, MAX_BATCH_SIZE, MAX_WAIT_S, metrics=metrics)
+    if SCHEDULER == "naive":
+        scheduler = NaiveScheduler(backend, MAX_BATCH_SIZE, MAX_WAIT_S, metrics=metrics)
+    else:
+        scheduler = DynamicScheduler(backend, MAX_BATCH_SIZE, MAX_WAIT_S, metrics=metrics)
+        
     scheduler.start()
     app.state.scheduler = scheduler
     app.state.metrics = metrics
