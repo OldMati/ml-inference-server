@@ -1,4 +1,3 @@
-# scheduler.py
 import queue
 import threading
 import time
@@ -113,3 +112,48 @@ class NaiveScheduler:
                         done_ts=done_ts,
                         batch_size=len(batch),
                     )
+
+class DynamicScheduler(NaiveScheduler):
+    
+    def _collect_batch(self):
+        # Block for the FIRST request — no spinning while idle.
+        first = self.queue.get()
+        if first is _SHUTDOWN:
+            return _SHUTDOWN
+
+        batch = [first]
+
+        qsize = self.queue.qsize()
+
+        if qsize == 0:  # if no more requests, return instantly
+            return batch
+        elif qsize >= self.max_batch_size - 1: # fill the batch instantly
+            for _ in range(self.max_batch_size - 1):
+                item = self.queue.get()
+                if item is _SHUTDOWN:
+                    self.queue.put(_SHUTDOWN)
+                    break
+                batch.append(item)
+            return batch
+
+        # dynamically adjusted deadline
+        deadline = time.monotonic() + self.max_wait_s * (1 - qsize / self.max_batch_size)
+
+        # Check length BEFORE each get so we never overfill by one.
+        while len(batch) < self.max_batch_size:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break                              # timeout: ship what we have
+            try:
+                item = self.queue.get(timeout=remaining)
+            except queue.Empty:
+                break                              # not enough traffic in time —
+                                                   # normal, not an error
+            if item is _SHUTDOWN:
+                # Shutdown landed mid-collect. Put it back for the next
+                # _collect_batch to see, and ship the in-flight batch cleanly.
+                self.queue.put(_SHUTDOWN)
+                break
+            batch.append(item)
+
+        return batch
