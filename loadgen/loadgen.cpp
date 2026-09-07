@@ -71,7 +71,7 @@ std::vector<char> load_fixture(const std::string& path) {
 int main(int argc, char** argv) {
     // ---- config (all overridable on the command line) ----
     double rate       = argc > 1 ? std::stod(argv[1]) : 500.0;   // requests/sec
-    int    workers    = argc > 2 ? std::stoi(argv[2]) : 32;      // pool size (Little's Law)
+    int    workers    = argc > 2 ? std::stoi(argv[2]) : 128;      // pool size (Little's Law)
     double duration_s = argc > 3 ? std::stod(argv[3]) : 10.0;    // measurement window
     std::string host  = argc > 4 ? argv[4] : "127.0.0.1";
     int    port       = argc > 5 ? std::stoi(argv[5]) : 8080;
@@ -105,6 +105,7 @@ int main(int argc, char** argv) {
 
             auto actual_send = steady_clock::now();
             auto res = cli.Post(path, image.data(), image.size(), "application/octet-stream");
+            // auto res = cli.Post("/echo", image.data(), image.size(), "application/octet-stream");
             // auto res  = cli.Get(path);                  // <-- the real request; swap for .Post(...) later
             auto done = steady_clock::now();
 

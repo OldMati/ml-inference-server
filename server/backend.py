@@ -19,7 +19,7 @@ class InferenceBackend:
         self.in_name = self.session.get_inputs()[0].name
         self.out_name = self.session.get_outputs()[0].name
 
-    def warmup(self, batch_sizes, iters=15):
+    def warmup(self, batch_sizes, iters=50):
         for b in batch_sizes:
             dummy = np.zeros((b, 3, 224, 224), dtype=np.float32)
             for _ in range(iters):

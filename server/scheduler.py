@@ -2,6 +2,7 @@ import queue
 import threading
 import time
 from dataclasses import dataclass
+from math import ceil
 
 import numpy as np
 # NOTE: we annotate asyncio types as strings below so this file doesn't need
@@ -11,7 +12,6 @@ import numpy as np
 # Poison pill: a unique sentinel pushed onto the queue at shutdown to wake the
 # worker out of a blocking get(). Identity (is) is all that matters.
 _SHUTDOWN = object()
-
 
 @dataclass
 class Request:
@@ -45,6 +45,7 @@ class NaiveScheduler:
         # The ABSENCE of a capacity check here is the naive policy. This is one
         # of the two methods that changes when you add admission control (Wk 5).
         self.queue.put(req)
+        return True
 
     def _collect_batch(self):
         # Block for the FIRST request — no spinning while idle.
@@ -85,9 +86,11 @@ class NaiveScheduler:
 
             # Single boundary stamp for the whole batch (see metrics reasoning).
             batch_start_ts = time.monotonic()
+            self.metrics.batch_start_time.append(batch_start_ts)
+            self.metrics.qsize_at_infer.append(self.queue.qsize())
 
             try:
-                batched = np.stack([r.input for r in batch])   # order preserved
+                batched = np.stack([r.input for r in batch])   # order preserve
                 outputs = self.backend.infer(batched)
             except Exception as e:
                 # Fulfill EVERY future with the error, then keep the thread
@@ -157,3 +160,29 @@ class DynamicScheduler(NaiveScheduler):
             batch.append(item)
 
         return batch
+
+
+class AdmissionScheduler(DynamicScheduler):
+    def __init__(self, backend, max_batch_size, max_wait_s,
+                 metrics=None, slo_ms=100.0, per_batch_ms=33.0):
+        super().__init__(backend, max_batch_size, max_wait_s, metrics=metrics)
+        self.slo_ms = slo_ms
+        self.per_batch_ms = per_batch_ms
+        self.rejected = 0
+
+    def should_admit(self, arrival_ts) -> bool:
+        qsize = self.queue.qsize()
+        projected_ms = ceil(qsize / self.max_batch_size) * self.per_batch_ms + self.per_batch_ms + (time.monotonic() - arrival_ts) * 1000
+        if projected_ms > self.slo_ms:
+            self.metrics.qsizes_bef_aft.append((qsize, self.queue.qsize()))
+            self.rejected += 1
+            self.metrics.record_rejection(arrival_ts=arrival_ts)
+            return False
+
+        return True
+
+
+    def submit(self, req: Request):
+        """Return True if admitted, False if rejected. Runs on the event loop thread."""
+
+        self.queue.put(req)
