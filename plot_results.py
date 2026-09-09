@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 
 def load_sweep(policy):
     rows = []
-    for f in sorted(glob.glob(f"results/{policy}/rate_*.csv"))[:9]:
+    for f in sorted(glob.glob(f"results/{policy}/rate_*.csv")):
         rate = int(re.search(r"rate_(\d+)", f).group(1))
         df = pd.read_csv(f)
         df = df[(df.phase == "measure") & (df.status == 200)]
@@ -21,7 +21,7 @@ def load_sweep(policy):
     return pd.DataFrame(rows).sort_values("offered_rate")
 
 fig, ax = plt.subplots(figsize=(7, 5))
-for policy, colour in [("naive", "tab:blue"), ("dynamic", "tab:orange"), ("admission", "tab:green")]:
+for policy, colour in [("naive", "tab:blue"), ("admission", "tab:green")]: #("dynamic", "tab:orange"), 
     s = load_sweep(policy)
     ax.plot(s.achieved_tput, s.p50, "o-", color=colour, label=f"{policy} p50")
     ax.plot(s.achieved_tput, s.p99, "s--", color=colour, label=f"{policy} p99")
