@@ -34,9 +34,9 @@ promise.
 | SLO | 50 ms, measured client-side from intended send time |
 | Batch cost (fixed shape, B=4) | 6.08 ms |
 | Serving capacity | 658 req/s |
-| Naive collapse point | <!-- FILL --> req/s |
-| Admission goodput at 1400 offered | <!-- FILL --> req/s |
-| Admission p50 / p99 at 1400 offered | <!-- FILL --> / <!-- FILL --> ms |
+| Naive collapse point | ~650 req/s |
+| Admission goodput at 1400 offered | 532.4 req/s |
+| Admission p50 / p99 at 1400 offered | 38.54 / 47.87 ms |
 
 ---
 
