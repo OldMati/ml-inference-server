@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# sweep.sh <policy>   -- server must already be running with that policy
+# sweep.sh <policy>
 POLICY=$1
 OUT=results/$POLICY
 mkdir -p "$OUT"
