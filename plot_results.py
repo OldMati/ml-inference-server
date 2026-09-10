@@ -72,4 +72,4 @@ for a in ax:
     a.legend(fontsize=8)
 
 fig.tight_layout()
-fig.savefig("policy_comparison.png", dpi=150, bbox_inches="tight")
+fig.savefig("figures/policy_comparison.png", dpi=150, bbox_inches="tight")
