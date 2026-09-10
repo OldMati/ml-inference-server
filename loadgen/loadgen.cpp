@@ -1,9 +1,6 @@
-// loadgen.cpp — open-loop, coordinated-omission-aware HTTP load generator.
-//
 // Build:  g++ -std=c++17 -O2 -pthread loadgen.cpp -o loadgen   (httplib.h in same dir)
-// Run:    ./loadgen [img_path] [rate] [workers] [host] [port] [duration] [out]
 // Out:    results.csv  (raw per-request rows for pandas/matplotlib) + a summary line.
-// python -m uvicorn server.api:app --host 127.0.0.1 --port 8080
+
 // Architecture: one DISPATCHER walks a fixed Poisson schedule and pushes intended
 // send-times into a queue; a POOL of workers pull jobs, issue the request over a
 // reused keep-alive connection, and record latency measured from the INTENDED time.
@@ -57,6 +54,8 @@ public:
 
 constexpr size_t IMAGE_BYTES = 3 * 224 * 224 * 4; 
 
+// std::vector<char> payload(50, 0x7f);  // TO REMOVE
+
 std::vector<char> load_fixture(const std::string& path) {
     std::ifstream f(path, std::ios::binary);
     if (!f) throw std::runtime_error("can't open fixture: " + path);
@@ -71,18 +70,18 @@ std::vector<char> load_fixture(const std::string& path) {
 int main(int argc, char** argv) {
     // ---- config (all overridable on the command line) ----
     double rate       = argc > 1 ? std::stod(argv[1]) : 500.0;   // requests/sec
-    int    workers    = argc > 2 ? std::stoi(argv[2]) : 128;      // pool size (Little's Law)
+    int    workers    = argc > 2 ? std::stoi(argv[2]) : 128;      // pool size
     double duration_s = argc > 3 ? std::stod(argv[3]) : 10.0;    // measurement window
     std::string host  = argc > 4 ? argv[4] : "127.0.0.1";
     int    port       = argc > 5 ? std::stoi(argv[5]) : 8080;
     std::string img_path = argc > 6 ? argv[6] : "fixtures/sample_input.bin";
-    std::string out = argc > 7 ? argv[7] : "results.csv";
-    const double warmup_s = 2.0;                                 // discard first 2 s
-    const char*  path     = "/predict";     
+    std::string path = argc > 7 ? argv[7] : "/predict";
+    std::string out = argc > 8 ? argv[8] : "results.csv";
+    const double warmup_s = 5.0;                                 // discard first 5 s
 
     std::vector<char> image;
     try {
-        image = load_fixture(img_path);  // path passed as a CLI arg, not hardcoded
+        image = load_fixture(img_path);
     } catch (const std::exception& e) {
         std::cerr << "fixture load failed: " << e.what() << "\n";
         return 1;
@@ -95,10 +94,11 @@ int main(int argc, char** argv) {
 
     const auto run_start = steady_clock::now();
 
-    // ---- worker: owns ONE keep-alive client, reused for every request ----
+    // ---- worker: owns one keep-alive client, reused for every request ----
     auto worker_fn = [&]() {
         httplib::Client cli(host, port);
         cli.set_keep_alive(true);
+        cli.set_tcp_nodelay(true);
         for (;;) {
             Job job = queue.pop();
             if (job.stop) break;
@@ -106,10 +106,9 @@ int main(int argc, char** argv) {
             auto actual_send = steady_clock::now();
             auto res = cli.Post(path, image.data(), image.size(), "application/octet-stream");
             // auto res = cli.Post("/echo", image.data(), image.size(), "application/octet-stream");
-            // auto res  = cli.Get(path);                  // <-- the real request; swap for .Post(...) later
+            // auto res  = cli.Get("/healthz");
             auto done = steady_clock::now();
 
-            // CO-correct: measure from INTENDED, not from actual_send or from dequeue time.
             double latency_ms  = duration<double, std::milli>(done - job.intended).count();
             double intended_ms = duration<double, std::milli>(job.intended - run_start).count();
             double send_lag_ms = duration<double, std::milli>(actual_send - job.intended).count();
@@ -150,9 +149,6 @@ int main(int argc, char** argv) {
             << r.status << "," << (r.warmup ? "warmup" : "measure") << "\n";
 
     // ---- steady-state summary (excludes warmup + failures) ----
-    // Split each request's total latency so you can tell WHO was slow:
-    //   send_lag        = time it waited in YOUR client before being sent (actual_send - intended)
-    //   server_response = latency - send_lag = time the SERVER took to answer (done - actual_send)
     std::vector<double> lat, lag, srv;
     for (auto& r : records)
         if (!r.warmup && r.status == 200) {
@@ -171,12 +167,5 @@ int main(int argc, char** argv) {
     printf("  latency         p50=%.2f  p99=%.2f  p99.9=%.2f ms\n", pct(lat,0.50), pct(lat,0.99), pct(lat,0.999));
     printf("  send_lag        p50=%.2f  p99=%.2f  max=%.2f ms\n",   pct(lag,0.50), pct(lag,0.99), pct(lag,1.0));
     printf("  server_response p50=%.2f  p99=%.2f  p99.9=%.2f ms\n", pct(srv,0.50), pct(srv,0.99), pct(srv,0.999));
-
-    // Warn on SUSTAINED client lag (a percentile), not a single worst sample.
-    if (pct(lag, 0.99) > 5.0)
-        printf("  NOTE: send_lag p99 is high -> the CLIENT is genuinely behind. Add workers or lower the rate.\n");
-    // A high server-side tail means the bottleneck (or stall) is the server, not you.
-    if (pct(srv, 0.999) > 50.0)
-        printf("  NOTE: server_response tail is high -> the SERVER is the bottleneck/stalling, not your client.\n");
     return 0;
 }

@@ -158,7 +158,7 @@ class DynamicScheduler(NaiveScheduler):
 
 class AdmissionScheduler(DynamicScheduler):
     def __init__(self, backend, max_batch_size, max_wait_s,
-                 metrics=None, slo_ms=100.0, per_batch_ms=7.6):
+                 metrics=None, slo_ms=50.0, per_batch_ms=7.6):
         super().__init__(backend, max_batch_size, max_wait_s, metrics=metrics)
         self.slo_ms = slo_ms
         self.per_batch_ms = per_batch_ms

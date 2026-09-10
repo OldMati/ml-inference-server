@@ -34,12 +34,12 @@ def main():
 
     provider = sess.get_providers()[0]
     print(f"active provider: {provider}\n")
-    # assert provider == "CUDAExecutionProvider", (
-    #     "Not running on GPU — this is the silent CPU-fallback gotcha. "
-    #     "You likely have the 'onnxruntime' package instead of "
-    #     "'onnxruntime-gpu'. Uninstall onnxruntime, install onnxruntime-gpu, "
-    #     "and check your CUDA/cuDNN versions match its requirements."
-    # )
+    assert provider == "CUDAExecutionProvider", (
+        "Not running on GPU — this is the silent CPU-fallback gotcha. "
+        "You likely have the 'onnxruntime' package instead of "
+        "'onnxruntime-gpu'. Uninstall onnxruntime, install onnxruntime-gpu, "
+        "and check your CUDA/cuDNN versions match its requirements."
+    )
 
     input_name = sess.get_inputs()[0].name
 

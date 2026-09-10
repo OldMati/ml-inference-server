@@ -1,4 +1,6 @@
-# api.py
+
+# Run: uvicorn api:app --host 127.0.0.1 --port 8080 --loop uvloop --http httptools --workers 1
+
 import asyncio
 import gc
 import os
@@ -11,22 +13,20 @@ from fastapi import FastAPI, HTTPException, Request, Response
 
 from backend import InferenceBackend
 from metrics import MetricsCollector
-# NAME CLASH TRAP: the scheduler's dataclass is also called Request, which is
-# FastAPI's request type. Alias it so the two never collide.
+
 from scheduler import NaiveScheduler, DynamicScheduler, AdmissionScheduler, Request as InferenceRequest
 
 from pathlib import Path
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MODEL_PATH = os.environ.get("MODEL_PATH", str(PROJECT_ROOT / "models" / "resnet50.onnx"))
 
 MAX_BATCH_SIZE = int(os.environ.get("MAX_BATCH_SIZE", "4"))
 MAX_WAIT_S     = float(os.environ.get("MAX_WAIT_S", "0.01"))   # 10 ms floor
-METRICS_CSV    = os.environ.get("METRICS_CSV", "")              # empty = no dump
+METRICS_CSV    = os.environ.get("METRICS_CSV", "")             # empty = no dump
 SCHEDULER = os.environ.get("SCHEDULER", "naive")
 
-# Wire contract (must match the loadgen exactly — swap points #1 and #2):
-# raw little-endian float32, one CHW image = (3,224,224) in C order, no batch dim.
-EXPECTED_BYTES = 3 * 224 * 224 * 4                              # 602112
+EXPECTED_BYTES = 3 * 224 * 224 * 4
 
 sys.setswitchinterval(0.001)
 
@@ -52,7 +52,6 @@ async def lifespan(app: FastAPI):
     gc.freeze()
     # gc.set_threshold(2_000, 100_000, 100_000)
     gc.disable()
-    # ═══════════════════════════════════════════════════════════════════
 
     yield
     scheduler.stop()
