@@ -2,7 +2,6 @@ import numpy as np
 import torch
 import onnxruntime as ort
 
-
 model_path = "models/resnet50.onnx"
 
 class InferenceBackend:
@@ -10,7 +9,10 @@ class InferenceBackend:
     def __init__(self, model_path, providers=("CUDAExecutionProvider",)):
         so = ort.SessionOptions()
         so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        self.session = ort.InferenceSession(model_path, sess_options=so, providers=[("CUDAExecutionProvider", {"device_id": 0})])
+        providers = [("CUDAExecutionProvider", {
+            "cudnn_conv_algo_search": "HEURISTIC",
+        })]
+        self.session = ort.InferenceSession(model_path, sess_options=so, providers=providers)
 
         active = self.session.get_providers()
         if "CUDAExecutionProvider" not in active:

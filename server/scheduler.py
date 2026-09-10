@@ -5,18 +5,13 @@ from dataclasses import dataclass
 from math import ceil
 
 import numpy as np
-# NOTE: we annotate asyncio types as strings below so this file doesn't need
-# to import asyncio — the worker thread never touches asyncio directly, it only
-# calls loop.call_soon_threadsafe on the loop object handed to it.
-
-# Poison pill: a unique sentinel pushed onto the queue at shutdown to wake the
-# worker out of a blocking get(). Identity (is) is all that matters.
 _SHUTDOWN = object()
 
 @dataclass
 class Request:
     input: np.ndarray                 # ONE 3x224x224 float32 tensor, no batch dim
     arrival_ts: float                 # time.monotonic(), stamped in the handler
+    body_ts: float                    # time.monotonic(), stamped in the handler
     future: "asyncio.Future"          # created via loop.create_future() in handler
     loop: "asyncio.AbstractEventLoop" # the loop that owns `future`
 
@@ -27,9 +22,9 @@ class NaiveScheduler:
         self.max_batch_size = max_batch_size
         self.max_wait_s = max_wait_s
         self.metrics = metrics
-        self.queue: "queue.Queue" = queue.Queue()   # unbounded ON PURPOSE:
-        self._thread = None                          # accept-until-collapse IS
-                                                     # the naive behavior.
+        self._buf = np.zeros((max_batch_size, 3, 224, 224), dtype=np.float32)
+        self.queue: "queue.Queue" = queue.Queue()
+        self._thread = None 
 
     def start(self):
         self._thread = threading.Thread(target=self._batch_loop, daemon=True)
@@ -41,25 +36,17 @@ class NaiveScheduler:
             self._thread.join()
 
     def submit(self, req: Request):
-        # Called from the event-loop thread. Queue is thread-safe, so no lock.
-        # The ABSENCE of a capacity check here is the naive policy. This is one
-        # of the two methods that changes when you add admission control (Wk 5).
         self.queue.put(req)
-        return True
 
     def _collect_batch(self):
-        # Block for the FIRST request — no spinning while idle.
         first = self.queue.get()
         if first is _SHUTDOWN:
             return _SHUTDOWN
 
         batch = [first]
-        # Deadline is anchored to the first request and NEVER reset as more
-        # arrive. Resetting it would let a steady trickle extend the batch and
-        # make the first request wait far longer than max_wait_s.
+        
         deadline = time.monotonic() + self.max_wait_s
 
-        # Check length BEFORE each get so we never overfill by one.
         while len(batch) < self.max_batch_size:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -78,48 +65,57 @@ class NaiveScheduler:
 
         return batch
 
+
     def _batch_loop(self):
         while True:
             batch = self._collect_batch()
             if batch is _SHUTDOWN:
                 break
 
-            # Single boundary stamp for the whole batch (see metrics reasoning).
             batch_start_ts = time.monotonic()
-            self.metrics.batch_start_time.append(batch_start_ts)
-            self.metrics.qsize_at_infer.append(self.queue.qsize())
 
             try:
-                batched = np.stack([r.input for r in batch])   # order preserve
-                outputs = self.backend.infer(batched)
+                n = len(batch)
+                for i, r in enumerate(batch):
+                    np.copyto(self._buf[i], r.input)
+                outputs = self.backend.infer(self._buf)[:n]   # always shape (4,...)
+                err = None
             except Exception as e:
-                # Fulfill EVERY future with the error, then keep the thread
-                # alive. Skipping this makes those requests await forever and
-                # vanish from the latency distribution — invisible, worse than a
-                # crash for a measurement project.
-                for r in batch:
-                    r.loop.call_soon_threadsafe(r.future.set_exception, e)
-                continue
+                outputs, err = None, e
 
             done_ts = time.monotonic()
 
-            # Scatter results. output row i belongs to batch[i] — the stack
-            # preserved order, so never reorder `batch`. Future is NOT
-            # thread-safe, so we go back through the loop, not set_result direct.
-            for i, r in enumerate(batch):
-                r.loop.call_soon_threadsafe(r.future.set_result, outputs[i])
-                if self.metrics is not None:
-                    self.metrics.record(
-                        arrival_ts=r.arrival_ts,
-                        batch_start_ts=batch_start_ts,
-                        done_ts=done_ts,
-                        batch_size=len(batch),
-                    )
+            # Build ONE callback for the whole batch
+            if err is None:
+                payload = [(r.future, outputs[i]) for i, r in enumerate(batch)]
+
+                def _fulfil(payload=payload):
+                    for fut, out in payload:
+                        if not fut.done():
+                            fut.set_result(out)
+            else:
+                futures = [r.future for r in batch]
+
+                def _fulfil(futures=futures, err=err):
+                    for fut in futures:
+                        if not fut.done():
+                            fut.set_exception(err)
+
+            batch[0].loop.call_soon_threadsafe(_fulfil)
+
+            if self.metrics is not None:
+                self.metrics.record_batch(
+                    arrival_ts=[r.arrival_ts for r in batch],
+                    body_ts=[r.body_ts for r in batch],
+                    batch_start_ts=batch_start_ts,
+                    done_ts=done_ts,
+                    batch_size=len(batch),
+                    failed=err is not None,
+                )
 
 class DynamicScheduler(NaiveScheduler):
     
     def _collect_batch(self):
-        # Block for the FIRST request — no spinning while idle.
         first = self.queue.get()
         if first is _SHUTDOWN:
             return _SHUTDOWN
@@ -142,7 +138,6 @@ class DynamicScheduler(NaiveScheduler):
         # dynamically adjusted deadline
         deadline = time.monotonic() + self.max_wait_s * (1 - qsize / self.max_batch_size)
 
-        # Check length BEFORE each get so we never overfill by one.
         while len(batch) < self.max_batch_size:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -150,8 +145,7 @@ class DynamicScheduler(NaiveScheduler):
             try:
                 item = self.queue.get(timeout=remaining)
             except queue.Empty:
-                break                              # not enough traffic in time —
-                                                   # normal, not an error
+                break                              # not enough traffic in time
             if item is _SHUTDOWN:
                 # Shutdown landed mid-collect. Put it back for the next
                 # _collect_batch to see, and ship the in-flight batch cleanly.
@@ -164,7 +158,7 @@ class DynamicScheduler(NaiveScheduler):
 
 class AdmissionScheduler(DynamicScheduler):
     def __init__(self, backend, max_batch_size, max_wait_s,
-                 metrics=None, slo_ms=100.0, per_batch_ms=33.0):
+                 metrics=None, slo_ms=100.0, per_batch_ms=7.6):
         super().__init__(backend, max_batch_size, max_wait_s, metrics=metrics)
         self.slo_ms = slo_ms
         self.per_batch_ms = per_batch_ms
@@ -172,17 +166,10 @@ class AdmissionScheduler(DynamicScheduler):
 
     def should_admit(self, arrival_ts) -> bool:
         qsize = self.queue.qsize()
-        projected_ms = ceil(qsize / self.max_batch_size) * self.per_batch_ms + self.per_batch_ms + (time.monotonic() - arrival_ts) * 1000
+        projected_ms = ceil(qsize / self.max_batch_size + 1) * self.per_batch_ms + self.per_batch_ms + (time.monotonic() - arrival_ts) * 1000
         if projected_ms > self.slo_ms:
-            self.metrics.qsizes_bef_aft.append((qsize, self.queue.qsize()))
             self.rejected += 1
             self.metrics.record_rejection(arrival_ts=arrival_ts)
             return False
 
         return True
-
-
-    def submit(self, req: Request):
-        """Return True if admitted, False if rejected. Runs on the event loop thread."""
-
-        self.queue.put(req)

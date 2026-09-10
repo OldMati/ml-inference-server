@@ -1,12 +1,13 @@
 # api.py
 import asyncio
+import gc
 import os
 import time
 from contextlib import asynccontextmanager
 import sys
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 
 from backend import InferenceBackend
 from metrics import MetricsCollector
@@ -16,10 +17,10 @@ from scheduler import NaiveScheduler, DynamicScheduler, AdmissionScheduler, Requ
 
 from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-MODEL_PATH = os.environ.get("MODEL_PATH", str(PROJECT_ROOT / "models" / "resnet18.onnx"))
+MODEL_PATH = os.environ.get("MODEL_PATH", str(PROJECT_ROOT / "models" / "resnet50.onnx"))
 
-MAX_BATCH_SIZE = int(os.environ.get("MAX_BATCH_SIZE", "16"))
-MAX_WAIT_S     = float(os.environ.get("MAX_WAIT_S", "0.005"))   # 5 ms floor
+MAX_BATCH_SIZE = int(os.environ.get("MAX_BATCH_SIZE", "4"))
+MAX_WAIT_S     = float(os.environ.get("MAX_WAIT_S", "0.01"))   # 10 ms floor
 METRICS_CSV    = os.environ.get("METRICS_CSV", "")              # empty = no dump
 SCHEDULER = os.environ.get("SCHEDULER", "naive")
 
@@ -39,13 +40,23 @@ async def lifespan(app: FastAPI):
     elif SCHEDULER == "dynamic":
         scheduler = DynamicScheduler(backend, MAX_BATCH_SIZE, MAX_WAIT_S, metrics=metrics)
     else:
+        print("SCHEDULER IS ADMISSION")
         scheduler = AdmissionScheduler(backend, MAX_BATCH_SIZE, MAX_WAIT_S, metrics=metrics)
     scheduler.start()
     app.state.scheduler = scheduler
     app.state.metrics = metrics
+
+    # ═══ GC TUNING — after backend, warmup, and scheduler are all up ═══
+    import gc
+    gc.collect()
+    gc.freeze()
+    # gc.set_threshold(2_000, 100_000, 100_000)
+    gc.disable()
+    # ═══════════════════════════════════════════════════════════════════
+
     yield
     scheduler.stop()
-    metrics.plot_inference_latencies()
+    print(metrics.batch_period_stats())
     if METRICS_CSV:
         metrics.dump_csv(METRICS_CSV)
     print('\n')
@@ -62,16 +73,13 @@ async def predict(request: Request):
     arrival_ts = time.monotonic()          # STAMP FIRST, before deserialization
 
     raw = await request.body()
+    body_ts = time.monotonic()                 # STAMP SECOND, after deserialization
     if len(raw) != EXPECTED_BYTES:         # clear error beats a cryptic reshape
         raise HTTPException(status_code=400,
                             detail=f"expected {EXPECTED_BYTES} bytes, got {len(raw)}")
 
-    if SCHEDULER == 'admission':
-        request.app.state.scheduler.metrics.admit_check_latency.append(arrival_ts)
-
-        if not request.app.state.scheduler.should_admit(arrival_ts):
-            raise HTTPException(status_code=503, detail="SLO cannot be met")
-
+    if SCHEDULER == 'admission' and not request.app.state.scheduler.should_admit(arrival_ts):
+        raise HTTPException(status_code=503, detail="SLO cannot be met")
 
     # frombuffer view is read-only, but np.stack in the worker copies anyway.
     # NOTE: no batch dim here — the scheduler stacks these into (B,3,224,224).
@@ -79,7 +87,7 @@ async def predict(request: Request):
 
     loop = asyncio.get_running_loop()
     future = loop.create_future()          # create ON the loop, never in worker
-    req = InferenceRequest(input=arr, arrival_ts=arrival_ts, future=future, loop=loop)
+    req = InferenceRequest(input=arr, arrival_ts=arrival_ts, body_ts=body_ts, future=future, loop=loop)
     request.app.state.scheduler.submit(req)
 
     try:
@@ -98,4 +106,4 @@ async def healthz():
 async def echo(request: Request):
     t0 = time.monotonic()
     raw = await request.body()
-    return {"read_ms": (time.monotonic() - t0) * 1000, "n": len(raw)}
+    return {"read_ms": (time.monotonic() - t0) * 1000}

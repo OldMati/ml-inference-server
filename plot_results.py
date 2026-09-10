@@ -21,12 +21,12 @@ def load_sweep(policy):
     return pd.DataFrame(rows).sort_values("offered_rate")
 
 fig, ax = plt.subplots(figsize=(7, 5))
-for policy, colour in [("naive", "tab:blue"), ("admission", "tab:green")]: #("dynamic", "tab:orange"), 
+for policy, colour in [("naive", "tab:blue"), ("admission", "tab:red")]:
     s = load_sweep(policy)
-    ax.plot(s.achieved_tput, s.p50, "o-", color=colour, label=f"{policy} p50")
-    ax.plot(s.achieved_tput, s.p99, "s--", color=colour, label=f"{policy} p99")
+    ax.plot(s.offered_rate, s.p50, "o-", color=colour, label=f"{policy} p50")
+    ax.plot(s.offered_rate, s.p99, "s--", color=colour, label=f"{policy} p99")
 
-ax.set_xlabel("Achieved throughput (req/s)")
+ax.set_xlabel("Offered rate (req/s)")
 ax.set_ylabel("Latency (ms)")
 ax.legend()
 ax.grid(alpha=0.3)
