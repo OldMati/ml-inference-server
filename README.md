@@ -20,8 +20,8 @@ C++ load generator. Evaluated on an RTX 4060.
 **Naive collapses at capacity; admission control does not.** Above ~658 req/s the naive
 server's queue grows without bound, latency climbs past the SLO, and *goodput falls toward
 zero — it is still returning HTTP 200s, but too late for any of them to be useful.*
-Admission control sheds the excess and holds p99 latency at <!-- FILL: p99 --> ms against a
-50 ms SLO, sustaining <!-- FILL: goodput --> req/s of useful throughput out to 1400 req/s
+Admission control sheds the excess and holds p99 latency at 48 ms against a
+50 ms SLO, sustaining 532 req/s of useful throughput out to 1400 req/s
 offered.
 
 Admission control never wins on raw throughput — above capacity both policies push the same
