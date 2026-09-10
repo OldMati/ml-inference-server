@@ -1,11 +1,6 @@
 """
-Export ResNet-18 to ONNX with a dynamic batch axis.
+Export ResNet-50 to ONNX with a dynamic batch axis.
 
-Week 1 deliverable (FP32 only — add INT8 quantization once this pipeline
-is proven end-to-end). Guards against the two export gotchas from the
-project reference:
-  - the dynamo exporter can silently write a corrupt/incomplete .onnx file
-  - a fixed batch axis silently locks you out of runtime batch-size changes
 """
 
 import os
@@ -13,14 +8,14 @@ import torch
 import torchvision
 
 OUT_DIR = "models"
-OUT_PATH = os.path.join(OUT_DIR, "resnet18.onnx")
+OUT_PATH = os.path.join(OUT_DIR, "resnet50.onnx")
 
 
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    model = torchvision.models.resnet18(
-        weights=torchvision.models.ResNet18_Weights.IMAGENET1K_V1
+    model = torchvision.models.resnet50(
+        weights=torchvision.models.ResNet50_Weights.IMAGENET1K_V1
     )
     model.eval()
 

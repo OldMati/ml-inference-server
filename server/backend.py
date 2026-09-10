@@ -1,8 +1,9 @@
 import numpy as np
+import torch
 import onnxruntime as ort
 
 
-model_path = "models/resnet18.onnx"
+model_path = "models/resnet50.onnx"
 
 class InferenceBackend:
     

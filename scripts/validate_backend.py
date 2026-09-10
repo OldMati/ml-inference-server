@@ -20,7 +20,7 @@ import numpy as np
 import onnxruntime as ort
 ort.preload_dlls()
 
-MODEL = "models/resnet18.onnx"
+MODEL = "models/resnet50.onnx"
 BATCH_SIZES = [1, 2, 4, 8, 16, 24, 32]
 WARMUP = 20
 ITERS = 100
